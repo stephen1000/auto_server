@@ -2,3 +2,10 @@
 .env
 secrets
 
+__pycache__
+
+tmp.py
+tmp/*
+
+*.log
+logs/*
