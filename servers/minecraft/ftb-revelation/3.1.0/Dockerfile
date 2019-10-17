@@ -32,8 +32,12 @@ USER minecraft
 # Running install
 RUN /minecraft/FTBInstall.sh
 
-# Expose port 25565
-EXPOSE 25565
+# Expose ports
+# minecraft server
+EXPOSE 25565 
+# ftb monitoring tools
+EXPOSE 8080
+EXPOSE 8123
 
 # Expose volume
 VOLUME ["/minecraft/world"]
