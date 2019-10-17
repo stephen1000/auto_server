@@ -1,18 +1,17 @@
-AWSTemplateFormatVersion: "2010-09-09"
+AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: AutoServerConfig
 Resources:
-  - ServerRequests:
-      Type: AWS::SQS::Queue
-  - ServerRequestLambda:
-      Type: AWS::Serverless::Function
-      Properties:
-        Handler: lambda_function.lambda_handler
-        Runtime: python3.7
-        CodeUri: ./
-        Events:
-          ServerRequestsEvent:
-            Type: SQS
-            Properties:
-              Queue: !GetAtt MySqsQueue.Arn
-              BatchSize: 10
+  ServerRequests:
+    Type: AWS::SQS::Queue
+  ServerRequestLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.7
+      Events:
+        ServerRequestsEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt MySqsQueue.Arn
+            BatchSize: 10
