@@ -9,9 +9,3 @@ Resources:
     Properties:
       Handler: lambda_function.lambda_handler
       Runtime: python3.7
-      Events:
-        ServerRequestsEvent:
-          Type: SQS
-          Properties:
-            Queue: !GetAtt MySqsQueue.Arn
-            BatchSize: 10
