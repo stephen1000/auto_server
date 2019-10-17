@@ -6,8 +6,6 @@ phases:
   build:
     commands:
       - python -m pip install --upgrade pip
-      - virtualenv .env
-      - .env/scripts/activate
       - pip install requirements.txt
       - export BUCKET=auto-server
       - aws cloudformation package --template-file template.yml --s3-bucket $BUCKET
