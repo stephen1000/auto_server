@@ -64,7 +64,8 @@ class AppDroplet(digitalocean.Droplet):
             self._ssh_client = self._get_ssh_client()
         return self._ssh_client
 
-    def _get_ssh_client(self):
+    def _get_ssh_client(self) -> paramiko.SSHClient:
+        """ Creates an SSH connection to the droplet """
         client = paramiko.SSHClient()
         # TODO: implement this!
         return client
@@ -153,9 +154,6 @@ class Controller(object):
         self.droplet.exec(
             "docker run"
             "-it"
-            "-p8080:8080"
-            "-p25565:25565"
-            "-p8123:8123"
             f"--name={self.app_name}"
             f"--mount source={self.app_name}_vol,target={APP_DIR}"
             f"{DOCKERFILE}"
@@ -183,13 +181,15 @@ def lambda_handler(event: dict, context: object):
     controller.app_name = app_name
 
     act = controller.actions.get(action)
-    if callable(act):
-        message = act()
-    else:
-        message = f"Invalid action: {action}"
+    # if callable(act):
+    #     message = act()
+    # else:
+    #     message = f"Invalid action: {action}"
+    message = f'Called action "{action}" for app "{app_name}".'
     return {"message": message}
 
 
 if __name__ == "__main__":
     print("To use the cli, call cli.py")
+    print("To debug, place a breakpoint here.")
 
