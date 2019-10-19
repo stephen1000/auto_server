@@ -1,11 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: AutoServerConfig
+Description: Auto Server entry lambda
 Resources:
-  # ServerRequests:
-  #   Type: AWS::SQS::Queue
   ServerRequestLambda:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: ServerRequestLambda
       Handler: lambda_function.lambda_handler
       Runtime: python3.7
+      Description: the lambda function
+      MemorySize: 128
+      Timeout: 15
