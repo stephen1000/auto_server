@@ -1,5 +1,5 @@
 version: 0.2
-BundleType: YAML
+BundleType: yaml
 phases:
   install:
     runtime-versions:
