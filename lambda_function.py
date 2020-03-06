@@ -9,17 +9,9 @@ import boto3
 import digitalocean
 import paramiko
 import requests
-
 from retry import retry
 
-APP_NAME = os.getenv("APP_NAME")
-APP_DIR = os.getenv("APP_DIR")
-DOCKERFILE = os.getenv("DOCKERFILE")
-DIGITALOCEAN_API_TOKEN = os.getenv("DIGITALOCEAN_API_TOKEN")
-DIGITALOCEAN_REGION_SLUG = os.getenv("DIGITALOCEAN_REGION_SLUG")
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+import settings
 
 
 class LambdaException(Exception):
@@ -42,37 +34,12 @@ class MultipleDropletsFound(LambdaException):
     """ Too many droplets were returned by this query. """
 
 
-class AppDroplet(digitalocean.Droplet):
-    """ Droplet + convenience methods for when it's bound to an app """
+class MultipleKeysFound(LambdaException):
+    """ Too many keys were found for this app """
 
-    class NoIpAddress(Exception):
-        """ Failed to find an IP address """
 
-    def __init__(self, *args, **kwargs):
-        self._ssh_client = None
-
-    @retry(tries=10, delay=3)
-    def get_ip_address(self):
-        if self.ip_address is None:
-            raise self.NoIpAddress("No IP address found")
-        return self.ip_address
-
-    @property
-    def ssh_client(self):
-        """ Returns a SSH client for this droplet """
-        if self._ssh_client is None:
-            self._ssh_client = self._get_ssh_client()
-        return self._ssh_client
-
-    def _get_ssh_client(self) -> paramiko.SSHClient:
-        """ Creates an SSH connection to the droplet """
-        client = paramiko.SSHClient()
-        # TODO: implement this!
-        return client
-
-    def exec(self, command):
-        """ Sends a command over SSH to the droplet """
-        return self.ssh_client.exec(command)
+class NoIpAddress(LambdaException):
+    """ Couldn't get an IP address for the droplet """
 
 
 class Controller(object):
@@ -85,6 +52,9 @@ class Controller(object):
     def __init__(self, app_name: str = ""):
         self.app_name = app_name
         self._droplet = None
+        self._private_key = None
+        self._ssh_key = None
+        self._ssh_client = None
         self.actions = {
             "create": self.create,
             "destroy": self.destroy,
@@ -92,10 +62,95 @@ class Controller(object):
             "backup": self.backup,
             "restore": self.restore,
         }
-        self.manager = digitalocean.Manager(token=DIGITALOCEAN_API_TOKEN)
+        self.manager = digitalocean.Manager(token=settings.DIGITALOCEAN_API_TOKEN)
 
     def __str__(self):
         return f'App controller for application "{self.app_name}"'
+
+    @retry(NoIpAddress, tries=10, delay=3)
+    def get_ip_address(self):
+        if self.droplet.ip_address is None:
+            raise NoIpAddress("No IP address found")
+        return self.droplet.ip_address
+
+    def exec(self, command):
+        """ Sends a command over SSH to the droplet """
+        return self.ssh_client.exec_command(command)
+
+    @property
+    def ssh_key(self):
+        if self._ssh_key is None:
+            self.ssh_key = self._create_ssh_key()
+        return self._ssh_key
+
+    def _get_ssh_key(self):
+        """ Retrieves or generates an SSH key """
+        keys = list(
+            filter(
+                lambda x: x.name == settings.APP_NAME, self.manager.get_all_sshkeys()
+            )
+        )
+
+        if len(keys) > 1:
+            raise MultipleKeysFound
+        if len(keys) == 0:
+            return self._create_ssh_key()
+
+        return keys[0]
+
+    def _create_ssh_key(self):
+        """ Creates a new SSH key """
+        self._ssh_key = digitalocean.SSHKey(
+            token=settings.DIGITALOCEAN_API_TOKEN,
+            name=settings.APP_NAME,
+            public_key=self.public_key,
+        )
+        self._ssh_key.create()
+        return self._ssh_key
+
+    @property
+    def public_key(self):
+        """ public portion of key """
+        return f"ssh-rsa {self.private_key.get_base64()}"
+
+    @property
+    def private_key(self):
+        """ Lazy loads pk from s3 or generates a fresh one """
+        if self._private_key is None:
+            self._private_key = self._get_private_key
+        return self._private_key
+
+    def _get_private_key(self):
+        """ Gets or creates a private key """
+        try:
+            s3.download_file(settings.S3_BUCKET_NAME, settings.S3_SSH_KEY_FILE_PATH)
+        except:
+            self._create_private_key()
+
+        private_key = paramiko.RSAKey.from_private_key_file(settings.SSH_KEY_FILE_NAME)
+        return private_key
+
+    def _create_private_key(self):
+        """ Generates a new private key and stores it locally and in s3 """
+        key = paramiko.RSAKey.generate(2048)
+        with open(settings.SSH_KEY_FILE_NAME, "wb") as f:
+            key.write_private_key(f)
+            s3.upload_fileobj(f, settings.S3_BUCKET_NAME, settings.S3_SSH_KEY_FILE_PATH)
+
+    @property
+    def ssh_client(self):
+        """ Returns a SSH client for this droplet """
+        if self._ssh_client is None:
+            self._ssh_client = self._create_ssh_client()
+        return self._ssh_client
+
+    @retry(tries=10, delay=3)
+    def _create_ssh_client(self) -> paramiko.SSHClient:
+        """ Creates an SSH connection to the droplet """
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(self.get_ip_address(), username="root", pkey=self.ssh_key)
+        return client
 
     @property
     def droplet(self):
@@ -107,33 +162,41 @@ class Controller(object):
     def _get_droplet(self):
         """ Calls DigitalOcean's API to fetch a droplet manager """
         droplets = self.manager.get_all_droplets()
-        droplets = list(filter(lambda d: d.name == APP_NAME, droplets))
+        droplets = list(filter(lambda d: d.name == settings.APP_NAME, droplets))
 
         if len(droplets) > 1:
             raise MultipleDropletsFound
         elif len(droplets) == 0:
-            raise DropletDoesNotExist
+            return self._create_droplet()
 
-        droplet = droplets[0]
-        return droplet
+        return droplets[0]
+
+    def _create_droplet(self):
+        """ Creates a new droplet """
+        self._droplet = digitalocean.Droplet(
+            token=settings.DIGITALOCEAN_API_TOKEN,
+            name=settings.APP_NAME,
+            region=settings.DIGITALOCEAN_REGION_SLUG,
+            image="docker-18-04",
+            size_slug="4gb",
+            keys=[self.public_key],
+        )
+        return self._droplet
 
     def backup(self):
         """ Tarballs app files, and uploads to S3 under ``S3_BUCKET_NAME`` """
-        obj_name = f"./{self.app_name}.tar.gz"
-        self.droplet.exec(f"tar -zcf {obj_name} /var/bin/{self.app_name}/")
-        self.droplet.exec(
-            f"aws s3 put-object --bucket {S3_BUCKET_NAME} --key {self.app_name} --body {obj_name}"
+        self.exec(f"tar -zcf {settings.ARCHIVE_FILE_NAME} /var/bin/{settings.APP_DIR}/")
+        self.exec(
+            f'aws s3 put-object --bucket {settings.S3_BUCKET_NAME} --key "{settings.S3_ARCHIVE_FILE_PATH}" --body {settings.ARCHIVE_FILE_NAME}'
         )
-        return f'Backed up app "{self.app_name}" to "{S3_BUCKET_NAME}"'
+        return f'Backed up app "{self.app_name}" to "{settings.S3_BUCKET_NAME}"'
 
     def restore(self):
         """ Fetches app files from S3 under ``S3_BUCKET_Name`` and extracts """
-        # s3 = boto3.client("s3")
-        # tarball = s3.get_object(Bucket=S3_BUCKET_NAME, Key=APP_NAME)
-        self.droplet.exec(
-            f"aws s3 get-object --bucket {S3_BUCKET_NAME} --key {self.app_name}"
+        self.exec(
+            f"aws s3 get-object --bucket {settings.S3_BUCKET_NAME} --key {settings.S3_ARCHIVE_FILE_PATH}"
         )
-        self.droplet.exec(f"tar -xz ./{self.app_name}.tar.gz /var/bin/{self.app_name}")
+        self.exec(f"tar -xz ./{settings.ARCHIVE_FILE_NAME} /var/bin/{settings.APP_DIR}")
         return "Restored!"
 
     def hard_destroy(self):
@@ -141,7 +204,7 @@ class Controller(object):
 
     def destroy(self, hard=False):
         if not hard:
-            self.droplet.exec("warn.sh")
+            self.exec("warn.sh")
 
         self.backup()
         self.droplet.destroy()
@@ -149,22 +212,20 @@ class Controller(object):
         return "Destroyed!"
 
     def create(self):
-        if self.droplet is not None:
-            raise DropletAlreadyExists
         self.droplet.exec(
             "docker run"
             "-it"
             f"--name={self.app_name}"
-            f"--mount source={self.app_name}_vol,target={APP_DIR}"
-            f"{DOCKERFILE}"
+            f"--mount source={self.app_name}_vol,target={settings.APP_DIR}"
+            f"{settings.DOCKERFILE}"
         )
-        return f"Created a new dropplet @ {self.droplet.get_ip_address()}"
+        return f"Created a new dropplet @ {self.get_ip_address()}"
 
     def point_route53(self):
         route53 = boto3.client("route53")
         route53.create_traffic_policy_instance(
             HostedZoneID="srv_a_record",
-            Name=APP_NAME,
+            Name=settings.APP_NAME,
             TTL=3600,
             TrafficPolicyID="srv_a_record",
             TrafficPolicyVersion=1,
@@ -172,6 +233,7 @@ class Controller(object):
 
 
 controller = Controller()
+s3 = boto3.resource("s3")
 
 
 def lambda_handler(event: dict, context: object):
@@ -181,10 +243,7 @@ def lambda_handler(event: dict, context: object):
     controller.app_name = app_name
 
     act = controller.actions.get(action)
-    # if callable(act):
-    #     message = act()
-    # else:
-    #     message = f"Invalid action: {action}"
+    message = act()
     message = f'Called action "{action}" for app "{app_name}".'
     return {"message": message}
 
@@ -192,4 +251,3 @@ def lambda_handler(event: dict, context: object):
 if __name__ == "__main__":
     print("To use the cli, call cli.py")
     print("To debug, place a breakpoint here.")
-
