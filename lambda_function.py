@@ -69,6 +69,7 @@ class Controller(object):
 
     @retry(NoIpAddress, tries=10, delay=3)
     def get_ip_address(self):
+        self.droplet.load()
         if self.droplet.ip_address is None:
             raise NoIpAddress("No IP address found")
         return self.droplet.ip_address
@@ -80,7 +81,7 @@ class Controller(object):
     @property
     def ssh_key(self):
         if self._ssh_key is None:
-            self.ssh_key = self._create_ssh_key()
+            self._ssh_key = self._create_ssh_key()
         return self._ssh_key
 
     def _get_ssh_key(self):
@@ -117,13 +118,13 @@ class Controller(object):
     def private_key(self):
         """ Lazy loads pk from s3 or generates a fresh one """
         if self._private_key is None:
-            self._private_key = self._get_private_key
+            self._private_key = self._get_private_key()
         return self._private_key
 
     def _get_private_key(self):
         """ Gets or creates a private key """
         try:
-            s3.download_file(settings.S3_BUCKET_NAME, settings.S3_SSH_KEY_FILE_PATH)
+            s3_bucket.download_file(settings.S3_SSH_KEY_FILE_PATH)
         except:
             self._create_private_key()
 
@@ -133,9 +134,8 @@ class Controller(object):
     def _create_private_key(self):
         """ Generates a new private key and stores it locally and in s3 """
         key = paramiko.RSAKey.generate(2048)
-        with open(settings.SSH_KEY_FILE_NAME, "wb") as f:
-            key.write_private_key(f)
-            s3.upload_fileobj(f, settings.S3_BUCKET_NAME, settings.S3_SSH_KEY_FILE_PATH)
+        key.write_private_key_file(settings.SSH_KEY_FILE_NAME)
+        s3_bucket.upload_file(settings.SSH_KEY_FILE_NAME, settings.S3_SSH_KEY_FILE_PATH)
 
     @property
     def ssh_client(self):
@@ -144,12 +144,13 @@ class Controller(object):
             self._ssh_client = self._create_ssh_client()
         return self._ssh_client
 
-    @retry(tries=10, delay=3)
     def _create_ssh_client(self) -> paramiko.SSHClient:
         """ Creates an SSH connection to the droplet """
         client = paramiko.SSHClient()
+        ip = self.get_ip_address()
+
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(self.get_ip_address(), username="root", pkey=self.ssh_key)
+        client.connect(ip, username="root", pkey=self.private_key)
         return client
 
     @property
@@ -181,6 +182,7 @@ class Controller(object):
             size_slug="4gb",
             keys=[self.public_key],
         )
+        self._droplet.create()
         return self._droplet
 
     def backup(self):
@@ -212,7 +214,7 @@ class Controller(object):
         return "Destroyed!"
 
     def create(self):
-        self.droplet.exec(
+        self.exec(
             "docker run"
             "-it"
             f"--name={self.app_name}"
@@ -234,7 +236,7 @@ class Controller(object):
 
 controller = Controller()
 s3 = boto3.resource("s3")
-
+s3_bucket = s3.Bucket(settings.S3_BUCKET_NAME)
 
 def lambda_handler(event: dict, context: object):
     """ Actually handles the lambda call """

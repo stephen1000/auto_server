@@ -2,6 +2,8 @@
 .env
 env
 secrets
+*.pub
+id_rsa
 
 __pycache__
 
