@@ -42,6 +42,11 @@ class NoIpAddress(LambdaException):
     """ Couldn't get an IP address for the droplet """
 
 
+@retry(tries=30, delay=10)
+def connect_ssh_client(client, *args, **kwargs):
+    return client.connect(*args, **kwargs)
+
+
 class Controller(object):
     """
     Controller for a server world 
@@ -136,13 +141,17 @@ class Controller(object):
         except:
             self._create_private_key()
 
-        private_key = paramiko.RSAKey.from_private_key_file(settings.SSH_KEY_FILE_NAME)
+        private_key = paramiko.RSAKey.from_private_key_file(
+            settings.SSH_KEY_FILE_NAME, password=settings.PRIVATE_KEY_PASSPHRASE
+        )
         return private_key
 
     def _create_private_key(self):
         """ Generates a new private key and stores it locally and in s3 """
         key = paramiko.RSAKey.generate(2048)
-        key.write_private_key_file(settings.SSH_KEY_FILE_NAME)
+        key.write_private_key_file(
+            settings.SSH_KEY_FILE_NAME, password=settings.PRIVATE_KEY_PASSPHRASE
+        )
         s3_bucket.upload_file(settings.SSH_KEY_FILE_NAME, settings.S3_SSH_KEY_FILE_PATH)
 
     @property
@@ -158,7 +167,9 @@ class Controller(object):
         ip = self.get_ip_address()
 
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(ip, username="root", pkey=self.private_key, timeout=90)
+        connect_ssh_client(
+            client, ip, username="root", pkey=self.private_key, timeout=90
+        )
         return client
 
     @property
