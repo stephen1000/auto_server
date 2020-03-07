@@ -1,7 +1,8 @@
+from subprocess import check_output
 import pytest
 import digitalocean
 
-import lambda_function
+from lambda_function import controller, lambda_handler
 
 from utils import kill_all_resources
 
@@ -18,9 +19,13 @@ def test_tests_are_configured():
 
 def test_create():
     """ Create a server """
-    lambda_function.lambda_handler(
+    lambda_handler(
         {"action": "create", "app_name": "factorio"}, object()
     )
+    ip = controller.get_ip_address()
+    status = check_output(['ping',ip])
+    pass
+
 
 
 def teardown_module(module):

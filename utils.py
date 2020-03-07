@@ -30,3 +30,6 @@ def main():
     args = get_args()
     if args.command == "kill":
         kill_all_resources()
+
+if __name__ == "__main__":
+    kill_all_resources()

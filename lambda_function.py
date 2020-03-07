@@ -84,6 +84,14 @@ class Controller(object):
             self._ssh_key = self._create_ssh_key()
         return self._ssh_key
 
+    @retry(tries=10, delay=3)
+    def get_ssh_key_fingerprint(self):
+        """ Retrieves the fingerprint """
+        self.ssh_key.load()
+        if self.ssh_key.fingerprint is None:
+            raise LambdaException
+        return self.ssh_key.fingerprint
+
     def _get_ssh_key(self):
         """ Retrieves or generates an SSH key """
         keys = list(
@@ -150,7 +158,7 @@ class Controller(object):
         ip = self.get_ip_address()
 
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(ip, username="root", pkey=self.private_key)
+        client.connect(ip, username="root", pkey=self.private_key, timeout=90)
         return client
 
     @property
@@ -174,13 +182,14 @@ class Controller(object):
 
     def _create_droplet(self):
         """ Creates a new droplet """
+        self.get_ssh_key_fingerprint()
         self._droplet = digitalocean.Droplet(
             token=settings.DIGITALOCEAN_API_TOKEN,
             name=settings.APP_NAME,
             region=settings.DIGITALOCEAN_REGION_SLUG,
             image="docker-18-04",
             size_slug="4gb",
-            keys=[self.public_key],
+            ssh_keys=[self.ssh_key.id],
         )
         self._droplet.create()
         return self._droplet
@@ -237,6 +246,7 @@ class Controller(object):
 controller = Controller()
 s3 = boto3.resource("s3")
 s3_bucket = s3.Bucket(settings.S3_BUCKET_NAME)
+
 
 def lambda_handler(event: dict, context: object):
     """ Actually handles the lambda call """
