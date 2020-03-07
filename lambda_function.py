@@ -136,7 +136,7 @@ class Controller(object):
     def _get_private_key(self):
         """ Gets or creates a private key """
         try:
-            s3_bucket.download_file(settings.S3_SSH_KEY_FILE_PATH)
+            s3_bucket.download_file(settings.S3_SSH_KEY_FILE_PATH, settings.SSH_KEY_FILE_NAME)
         except:
             self._create_private_key()
 
@@ -255,7 +255,7 @@ class Controller(object):
 
 controller = Controller()
 s3 = boto3.resource("s3")
-s3_bucket = s3.Bucket(settings.S3_BUCKET_NAME)
+s3_bucket = s3.Bucket(settings.S3_BUCKET_NAME) # pylint: disable=no-member
 
 
 def lambda_handler(event: dict, context: object):

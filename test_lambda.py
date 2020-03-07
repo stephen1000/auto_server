@@ -35,6 +35,31 @@ def test_create():
     assert received > 0
 
 
+def test_backup():
+    """ Save a server's files """
+
+
+def test_restore():
+    """ Restore a server from S3 """
+
+
+def test_destroy():
+    """ Destroy a server """
+
+
+def test_hard_destroy():
+    """ Destroy a server immediately """
+
+
+def test_point_route53():
+    """ Point route53 to a droplet """
+
+
+def test_exec():
+    """ Make sure ssh connects """
+    controller.exec('ping 8.8.8.8')
+
+
 def teardown_module(module):
     """ 
     Ensure we've killed any droplet we created. Note that this kills all droplets
