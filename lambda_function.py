@@ -8,7 +8,6 @@ import time
 import boto3
 import digitalocean
 import paramiko
-import requests
 from retry import retry
 
 import settings
