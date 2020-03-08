@@ -53,8 +53,9 @@ class Controller(object):
 
     ALL_ACTIONS = ["create", "destroy", "hard_destroy", "backup", "restore"]
 
-    def __init__(self, app_name: str = ""):
+    def __init__(self, app_name: str = "", message_body: str = ""):
         self.app_name = app_name
+        self.message_body = message_body
         self._droplet = None
         self._private_key = None
         self._ssh_key = None
@@ -65,6 +66,7 @@ class Controller(object):
             "hard_destroy": self.hard_destroy,
             "backup": self.backup,
             "restore": self.restore,
+            "exec": self.exec,
         }
         self.manager = digitalocean.Manager(token=settings.DIGITALOCEAN_API_TOKEN)
 
@@ -78,7 +80,7 @@ class Controller(object):
             raise NoIpAddress("No IP address found")
         return self.droplet.ip_address
 
-    def exec(self, command):
+    def _exec(self, command):
         """ Sends a command over SSH to the droplet """
         return self.ssh_client.exec_command(command)
 
@@ -136,7 +138,9 @@ class Controller(object):
     def _get_private_key(self):
         """ Gets or creates a private key """
         try:
-            s3_bucket.download_file(settings.S3_SSH_KEY_FILE_PATH, settings.SSH_KEY_FILE_NAME)
+            s3_bucket.download_file(
+                settings.S3_SSH_KEY_FILE_PATH, settings.SSH_KEY_FILE_NAME
+            )
         except:
             self._create_private_key()
 
@@ -204,20 +208,33 @@ class Controller(object):
         self._droplet.create()
         return self._droplet
 
+    def _configure_droplet(self):
+        """ Run standard configuration on the new droplet """
+
+    def exec(self):
+        """ Run a command on the server. Not to be confused with ``_exec`` """
+        _, stdout, stderr = self._exec(self.message_body)
+        result = stdout.read().decode() or stderr.read().decode() or 'Success'
+        return f'Ran command "{self.message_body}":\n{result}'
+
     def backup(self):
         """ Tarballs app files, and uploads to S3 under ``S3_BUCKET_NAME`` """
-        self.exec(f"tar -zcf {settings.ARCHIVE_FILE_NAME} /var/bin/{settings.APP_DIR}/")
-        self.exec(
+        self._exec(
+            f"tar -zcf {settings.ARCHIVE_FILE_NAME} /var/bin/{settings.APP_DIR}/"
+        )
+        self._exec(
             f'aws s3 put-object --bucket {settings.S3_BUCKET_NAME} --key "{settings.S3_ARCHIVE_FILE_PATH}" --body {settings.ARCHIVE_FILE_NAME}'
         )
         return f'Backed up app "{self.app_name}" to "{settings.S3_BUCKET_NAME}"'
 
     def restore(self):
         """ Fetches app files from S3 under ``S3_BUCKET_Name`` and extracts """
-        self.exec(
+        self._exec(
             f"aws s3 get-object --bucket {settings.S3_BUCKET_NAME} --key {settings.S3_ARCHIVE_FILE_PATH}"
         )
-        self.exec(f"tar -xz ./{settings.ARCHIVE_FILE_NAME} /var/bin/{settings.APP_DIR}")
+        self._exec(
+            f"tar -xz ./{settings.ARCHIVE_FILE_NAME} /var/bin/{settings.APP_DIR}"
+        )
         return "Restored!"
 
     def hard_destroy(self):
@@ -225,7 +242,7 @@ class Controller(object):
 
     def destroy(self, hard=False):
         if not hard:
-            self.exec("warn.sh")
+            self._exec("warn.sh")
 
         self.backup()
         self.droplet.destroy()
@@ -233,7 +250,7 @@ class Controller(object):
         return "Destroyed!"
 
     def create(self):
-        self.exec(
+        self._exec(
             "docker run"
             "-it"
             f"--name={self.app_name}"
@@ -255,18 +272,20 @@ class Controller(object):
 
 controller = Controller()
 s3 = boto3.resource("s3")
-s3_bucket = s3.Bucket(settings.S3_BUCKET_NAME) # pylint: disable=no-member
+s3_bucket = s3.Bucket(settings.S3_BUCKET_NAME)  # pylint: disable=no-member
 
 
 def lambda_handler(event: dict, context: object):
     """ Actually handles the lambda call """
     action = event["action"]
     app_name = event["app_name"]
+    body = event["body"]
     controller.app_name = app_name
+    controller.message_body = body
 
     act = controller.actions.get(action)
-    message = act()
-    message = f'Called action "{action}" for app "{app_name}".'
+    message = f'Called action "{action}" for app "{app_name}".\n'
+    message += act()
     return {"message": message}
 
 

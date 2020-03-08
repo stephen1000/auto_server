@@ -1,5 +1,9 @@
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 APP_NAME = os.getenv("APP_NAME")
 APP_DIR = os.getenv("APP_DIR")
 DOCKERFILE = os.getenv("DOCKERFILE")
@@ -16,3 +20,19 @@ S3_SSH_KEY_FILE_PATH = f"{S3_FOLDER}/{SSH_KEY_NAME}"
 
 ARCHIVE_FILE_NAME = f"{APP_NAME}.tar.gz"
 S3_ARCHIVE_FILE_PATH = f"{S3_FOLDER}/{ARCHIVE_FILE_NAME}"
+
+all_settings = [
+    APP_NAME,
+    APP_DIR,
+    DOCKERFILE,
+    DIGITALOCEAN_API_TOKEN,
+    DIGITALOCEAN_REGION_SLUG,
+    PRIVATE_KEY_PASSPHRASE,
+    S3_BUCKET_NAME,
+    S3_FOLDER,
+    SSH_KEY_NAME,
+    SSH_KEY_FILE_NAME,
+    S3_SSH_KEY_FILE_PATH,
+    ARCHIVE_FILE_NAME,
+    S3_ARCHIVE_FILE_PATH,
+]

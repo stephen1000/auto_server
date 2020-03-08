@@ -33,6 +33,23 @@ def test_create():
         raise Exception("Unexpected terminal response: " + status)
     received = int(result_str.groups()[0])
     assert received > 0
+    commands = [
+        "sudo mkdir -p /opt/factorio",
+        "sudo chown 845:845 /opt/factorio",
+        " ".join(
+            [
+                "sudo docker run -d" "-p 34197:34197/udp",
+                "-p 27015:27015/tcp",
+                "-v /opt/factorio:/factorio",
+                "--name factorio",
+                "--restart=always",
+                "factoriotools/factorio",
+            ]
+        ),
+    ]
+    for command in commands:
+        controller.exec(command)
+    pass
 
 
 def test_backup():
@@ -57,7 +74,7 @@ def test_point_route53():
 
 def test_exec():
     """ Make sure ssh connects """
-    controller.exec('ping 8.8.8.8')
+    controller.exec("ping 8.8.8.8")
 
 
 def teardown_module(module):

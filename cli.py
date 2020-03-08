@@ -1,6 +1,10 @@
 import argparse
+import json
 import sys
-from lambda_function import lambda_handler, controller
+
+import settings
+from lambda_function import controller, lambda_handler
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -9,21 +13,17 @@ def main():
         "action", type=str, help="Action to perform", choices=controller.actions
     )
 
-    args = parser.parse_args()
+    args, body = parser.parse_known_args()
+    if body:
+        body = " ".join(body)
 
-    action = {"action": args.action, "app_name": args.app_name}
+    action = {"action": args.action, "app_name": args.app_name, "body": body}
     context = {}
 
-    lambda_handler(action, context)
-
-
-def get_passed_args():
-    if sys.argv[0].lower() == 'python':
-        return sys.argv[1:]
-    return sys.argv
+    result = lambda_handler(action, context)
+    message = result.get("message")
+    print(message or "No response")
 
 
 if __name__ == "__main__":
     main()
-
-
