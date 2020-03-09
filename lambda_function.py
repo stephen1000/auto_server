@@ -61,12 +61,13 @@ class Controller(object):
         self._ssh_key = None
         self._ssh_client = None
         self.actions = {
+            "backup": self.backup,
+            "configure": self.configure,
             "create": self.create,
+            "exec": self.exec,
             "destroy": self.destroy,
             "hard_destroy": self.hard_destroy,
-            "backup": self.backup,
             "restore": self.restore,
-            "exec": self.exec,
         }
         self.manager = digitalocean.Manager(token=settings.DIGITALOCEAN_API_TOKEN)
 
@@ -80,9 +81,12 @@ class Controller(object):
             raise NoIpAddress("No IP address found")
         return self.droplet.ip_address
 
-    def _exec(self, command):
+    def _exec(self, command, wait_for_completion:bool=True):
         """ Sends a command over SSH to the droplet """
-        return self.ssh_client.exec_command(command)
+        stdin, stdout, stderr = self.ssh_client.exec_command(command)
+        if wait_for_completion:
+            stdout.channel.recv_exit_status() 
+        return stdin, stdout, stderr
 
     @property
     def ssh_key(self):
@@ -206,16 +210,36 @@ class Controller(object):
             ssh_keys=[self.ssh_key.id],
         )
         self._droplet.create()
+        self._configure_droplet()
         return self._droplet
 
     def _configure_droplet(self):
         """ Run standard configuration on the new droplet """
+        self.get_ip_address()
+        commands = [
+            # ensure we have the packages we need
+            f"apt-get --assume-yes update",
+            f"apt --assume-yes install awscli",
+            f"aws configure set AWS_ACCESS_KEY_ID {settings.AWS_ACCESS_KEY_ID}",
+            f"aws configure set AWS_SECRET_ACCESS_KEY {settings.AWS_SECRET_ACCESS_KEY}",
+            f"aws configure set region {settings.AWS_REGION_ID}",
+            f"aws configure set output {settings.AWS_OUTPUT_FORMAT}",
+        ]
+        for command in commands:
+            print(self.exec(command))
+        return "Droplet configured!"
 
-    def exec(self):
+    def configure(self):
+        """ Rerun configuration on a droplet """
+        return self._configure_droplet()
+
+    def exec(self, command=None):
         """ Run a command on the server. Not to be confused with ``_exec`` """
-        _, stdout, stderr = self._exec(self.message_body)
-        result = stdout.read().decode() or stderr.read().decode() or 'Success'
-        return f'Ran command "{self.message_body}":\n{result}'
+        if command is None:
+            command = self.message_body
+        _, stdout, stderr = self._exec(command)
+        result = stdout.read().decode() or stderr.read().decode() or "Success"
+        return f'Ran command "{command}":\n{result}'
 
     def backup(self):
         """ Tarballs app files, and uploads to S3 under ``S3_BUCKET_NAME`` """
@@ -279,13 +303,17 @@ def lambda_handler(event: dict, context: object):
     """ Actually handles the lambda call """
     action = event["action"]
     app_name = event["app_name"]
-    body = event["body"]
+    body = event.get("body", "")
     controller.app_name = app_name
     controller.message_body = body
 
     act = controller.actions.get(action)
+    response = act()
+
     message = f'Called action "{action}" for app "{app_name}".\n'
-    message += act()
+    if response:
+        message += response
+
     return {"message": message}
 
 
