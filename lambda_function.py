@@ -81,11 +81,11 @@ class Controller(object):
             raise NoIpAddress("No IP address found")
         return self.droplet.ip_address
 
-    def _exec(self, command, wait_for_completion:bool=True):
+    def _exec(self, command, wait_for_completion: bool = True):
         """ Sends a command over SSH to the droplet """
         stdin, stdout, stderr = self.ssh_client.exec_command(command)
         if wait_for_completion:
-            stdout.channel.recv_exit_status() 
+            stdout.channel.recv_exit_status()
         return stdin, stdout, stderr
 
     @property
@@ -143,7 +143,7 @@ class Controller(object):
         """ Gets or creates a private key """
         try:
             s3_bucket.download_file(
-                settings.S3_SSH_KEY_FILE_PATH, settings.SSH_KEY_FILE_NAME
+                settings.S3_SSH_KEY_FILE_PATH, settings.SSH_KEY_FILE_NAME,
             )
         except:
             self._create_private_key()
@@ -184,6 +184,7 @@ class Controller(object):
         """ Provides a lazily loaded droplet for ``self.app_name`` """
         if self._droplet is None:
             self._droplet = self._get_droplet()
+            self._configure_droplet()
         return self._droplet
 
     def _get_droplet(self):
@@ -210,23 +211,25 @@ class Controller(object):
             ssh_keys=[self.ssh_key.id],
         )
         self._droplet.create()
-        self._configure_droplet()
         return self._droplet
 
     def _configure_droplet(self):
         """ Run standard configuration on the new droplet """
         self.get_ip_address()
         commands = [
+            # create app_dir
+            f"mkdir -p {settings.APP_DIR}",
             # ensure we have the packages we need
             f"apt-get --assume-yes update",
             f"apt --assume-yes install awscli",
+            # configure AWS
             f"aws configure set AWS_ACCESS_KEY_ID {settings.AWS_ACCESS_KEY_ID}",
             f"aws configure set AWS_SECRET_ACCESS_KEY {settings.AWS_SECRET_ACCESS_KEY}",
             f"aws configure set region {settings.AWS_REGION_ID}",
             f"aws configure set output {settings.AWS_OUTPUT_FORMAT}",
         ]
         for command in commands:
-            print(self.exec(command))
+            self._exec(command)
         return "Droplet configured!"
 
     def configure(self):
@@ -243,22 +246,24 @@ class Controller(object):
 
     def backup(self):
         """ Tarballs app files, and uploads to S3 under ``S3_BUCKET_NAME`` """
-        self._exec(
-            f"tar -zcf {settings.ARCHIVE_FILE_NAME} /var/bin/{settings.APP_DIR}/"
-        )
-        self._exec(
-            f'aws s3 put-object --bucket {settings.S3_BUCKET_NAME} --key "{settings.S3_ARCHIVE_FILE_PATH}" --body {settings.ARCHIVE_FILE_NAME}'
-        )
+        self.get_ip_address()
+        commands = [
+            f"tar -C {settings.APP_DIR} -zcvf {settings.ARCHIVE_FILE_NAME} .",
+            f"aws s3 cp {settings.ARCHIVE_FILE_NAME} s3://{settings.S3_BUCKET_NAME}/{settings.S3_ARCHIVE_FILE_PATH}",
+        ]
+        for command in commands:
+            print(self.exec(command))
         return f'Backed up app "{self.app_name}" to "{settings.S3_BUCKET_NAME}"'
 
     def restore(self):
         """ Fetches app files from S3 under ``S3_BUCKET_Name`` and extracts """
-        self._exec(
-            f"aws s3 get-object --bucket {settings.S3_BUCKET_NAME} --key {settings.S3_ARCHIVE_FILE_PATH}"
-        )
-        self._exec(
-            f"tar -xz ./{settings.ARCHIVE_FILE_NAME} /var/bin/{settings.APP_DIR}"
-        )
+        self.get_ip_address()
+        commands = [
+            f"aws s3 cp s3://{settings.S3_BUCKET_NAME}/{settings.S3_ARCHIVE_FILE_PATH} {settings.ARCHIVE_FILE_NAME}",
+            f"tar -xvzf {settings.ARCHIVE_FILE_NAME} -C {settings.APP_DIR}",
+        ]
+        for command in commands:
+            print(self.exec(command))
         return "Restored!"
 
     def hard_destroy(self):
@@ -274,13 +279,19 @@ class Controller(object):
         return "Destroyed!"
 
     def create(self):
-        self._exec(
-            "docker run"
-            "-it"
-            f"--name={self.app_name}"
-            f"--mount source={self.app_name}_vol,target={settings.APP_DIR}"
-            f"{settings.DOCKERFILE}"
+        command = " ".join(
+            [
+                "docker run",
+                "-p 34197:34197/udp",
+                "-p 27015:27015/tcp",
+                "-it",
+                f"--name={self.app_name}",
+                "--restart=always",
+                f"-v {settings.APP_DIR}:/{self.app_name}",
+                f"{settings.DOCKERFILE}",
+            ]
         )
+        self._exec(command)
         return f"Created a new dropplet @ {self.get_ip_address()}"
 
     def point_route53(self):
